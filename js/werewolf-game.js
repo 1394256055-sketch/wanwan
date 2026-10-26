@@ -1,4 +1,4 @@
-// werewolf-game.js — 游戏大厅 / 狼人杀（6 人基础局）
+// werewolf-game.js — 游戏大厅 / 狼人杀（6 人新手局 + 9 人标准局，已解锁）
 (function() {
   'use strict'
 
@@ -76,6 +76,17 @@
       (p.avatar ? '<img src="' + esc(p.avatar) + '" alt="">' : '<span class="ww-avatar-fallback" aria-hidden="true">' + esc(name.slice(0, 1)) + '</span>') + '</span>'
   }
 
+  // 房间模式配置：根据 mode 决定总人数 / 邀请上限 / 展示名称 / 身份构成
+  function roomConfig(mode) {
+    var nine = mode === 'nine_standard'
+    return {
+      mode: mode,
+      total: nine ? 9 : 6,
+      inviteMax: nine ? 8 : 5,
+      label: nine ? '9 人标准局' : '6 人新手局'
+    }
+  }
+
   async function loadFriends(user) {
     if (!window.db || !db.config || !db.characters) return []
     var cfg = null
@@ -148,9 +159,9 @@
     return saved
   }
 
-  function freshLobby(user, friends) {
+  function freshLobby(user, friends, mode) {
     return {
-      id: uid(), gameMode: 'six_basic', phase: 'lobby', day: 0, round: 0,
+      id: uid(), gameMode: mode || 'six_basic', phase: 'lobby', day: 0, round: 0,
       startedAt: null, endedAt: null, players: [], friends: friends || [], invitedIds: [],
       userAccount: accountFromUser(user),
       night: emptyNight(), vote: emptyVote(), publicLog: [], privateLog: [], winner: null, winReason: '',
@@ -214,7 +225,7 @@
     state = null
     var rooms = [
       { mode: 'six', count: '6 人', name: '新手局', detail: '2 狼人 · 1 预言家 · 1 女巫 · 2 村民', open: true },
-      { mode: 'nine', count: '9 人', name: '标准局', detail: '角色配置更完整，适合熟悉规则后体验' },
+      { mode: 'nine', count: '9 人', name: '标准局', detail: '3 狼人 · 1 预言家 · 1 女巫 · 4 村民', open: true },
       { mode: 'twelve', count: '12 人', name: '进阶局', detail: '更多神职与策略空间' },
       { mode: 'custom', count: '自定义', name: '自定义房间', detail: '自由设置人数与角色配置' }
     ]
@@ -231,6 +242,7 @@
     page.querySelectorAll('[data-room]').forEach(function(card) {
       card.onclick = function() {
         if (card.dataset.room === 'six') enterSixPlayerRoom()
+        else if (card.dataset.room === 'nine') enterNinePlayerRoom()
         else toast('该房间暂未开放')
       }
     })
@@ -254,10 +266,12 @@
     } })
   }
 
-  function enterSixPlayerRoom() {
+  function enterSixPlayerRoom() { enterRoom('six_basic') }
+  function enterNinePlayerRoom() { enterRoom('nine_standard') }
+  function enterRoom(mode) {
     if (!selectedUser) return chooseWechatAccount()
-    if (!resumableState || String(resumableState.userAccount && resumableState.userAccount.id) !== String(selectedUser.id)) {
-      state = freshLobby(selectedUser, selectedFriends)
+    if (!resumableState || resumableState.gameMode !== mode || String(resumableState.userAccount && resumableState.userAccount.id) !== String(selectedUser.id)) {
+      state = freshLobby(selectedUser, selectedFriends, mode)
       save()
       return renderLobby()
     }
@@ -290,7 +304,8 @@
     var rows = list.map(function(item) {
       var date = item.endedAt ? new Date(item.endedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '时间未知'
       var winner = item.winner === 'villagers' ? '好人阵营获胜' : '狼人阵营获胜'
-      return '<button class="ww-history-card" type="button" data-history-id="' + esc(item.id) + '"><div><b>6 人新手局</b><time>' + esc(date) + '</time></div><h3>' + winner + '</h3><p>' + esc(item.winReason || '') + '</p><span>' + ((item.players && item.players.length) || 6) + ' 位玩家</span></button>'
+      var label = item.mode === 'nine_standard' ? '9 人标准局' : '6 人新手局'
+      return '<button class="ww-history-card" type="button" data-history-id="' + esc(item.id) + '"><div><b>' + esc(label) + '</b><time>' + esc(date) + '</time></div><h3>' + winner + '</h3><p>' + esc(item.winReason || '') + '</p><span>' + ((item.players && item.players.length) || 6) + ' 位玩家</span></button>'
     }).join('')
     shell('历史记录', rows ? '<div class="ww-history-list">' + rows + '</div>' : '<div class="ww-history-empty"><i class="fa-solid fa-clock-rotate-left"></i><h2>暂无历史记录</h2><p>完成一局游戏后，对局结果会保存在这里。</p></div>', '<span></span>', function() { state ? render() : renderRoomPicker() })
     page.querySelectorAll('[data-history-id]').forEach(function(card) {
@@ -317,15 +332,19 @@
 
   function renderLobby() {
     var selected = state.invitedIds.map(String)
-    var slots = 5 - selected.length
+    var cfg = roomConfig(state.gameMode)
+    var total = cfg.total
+    var slots = (total - 1) - selected.length
+    var slotArr = []
+    for (var s = 0; s < total; s++) slotArr.push(s)
     var friends = state.friends.map(function(f) {
       var on = selected.indexOf(String(f.id)) >= 0
       return '<button class="ww-friend ' + (on ? 'selected' : '') + '" data-friend="' + esc(f.id) + '" type="button">' + avatarHTML({ publicName: f.name, avatar: f.avatar }) +
         '<span><b>' + esc(f.name) + '</b><small>' + (on ? '已邀请' : '点击邀请') + '</small></span><i class="fa-solid ' + (on ? 'fa-check' : 'fa-plus') + '"></i></button>'
     }).join('')
     shell('组建房间', '<section class="ww-account">' + avatarHTML({ publicName: state.userAccount.name, avatar: state.userAccount.avatar }) + '<div><b>' + esc(state.userAccount.name) + '</b><span>房主</span></div></section>' +
-      '<section class="ww-room-status"><div><span>当前人数</span><b>' + (selected.length + 1) + ' / 6</b></div><div class="ww-slot-dots">' + [0,1,2,3,4,5].map(function(i) { return '<i class="' + (i <= selected.length ? 'filled' : '') + '"></i>' }).join('') + '</div></section>' +
-      '<section class="ww-section-head"><div><h3>邀请好友</h3><p>最多邀请 5 人</p></div></section>' +
+      '<section class="ww-room-status"><div><span>当前人数</span><b>' + (selected.length + 1) + ' / ' + total + '</b></div><div class="ww-slot-dots">' + slotArr.map(function(i) { return '<i class="' + (i <= selected.length ? 'filled' : '') + '"></i>' }).join('') + '</div></section>' +
+      '<section class="ww-section-head"><div><h3>邀请好友</h3><p>最多邀请 ' + (total - 1) + ' 人</p></div></section>' +
       '<div class="ww-friend-list">' + (friends || '<div class="ww-empty">微信好友列表为空，可以直接匹配路人。</div>') + '</div>' +
       '<div class="ww-actions"><button class="ww-secondary" id="ww-match" type="button" ' + (slots <= 0 ? 'disabled' : '') + '><i class="fa-solid fa-users"></i> 匹配 ' + slots + ' 位路人</button>' +
       '<button class="ww-primary" id="ww-start" type="button" ' + (slots > 0 ? 'disabled' : '') + '>开始游戏</button></div>')
@@ -333,7 +352,7 @@
       btn.onclick = function() {
         var id = String(btn.dataset.friend); var idx = state.invitedIds.map(String).indexOf(id)
         if (idx >= 0) state.invitedIds.splice(idx, 1)
-        else if (state.invitedIds.length < 5) state.invitedIds.push(id)
+        else if (state.invitedIds.length < total - 1) state.invitedIds.push(id)
         save(); renderLobby()
       }
     })
@@ -344,10 +363,13 @@
   async function setupGame(matchStrangers) {
     if (busy) return; busy = true; state.phase = 'setup'; save(); renderSetup('正在邀请角色…')
     try {
+      var cfg = roomConfig(state.gameMode)
+      var total = cfg.total
+      var target = total - 1
       var invited = state.friends.filter(function(f) { return state.invitedIds.map(String).indexOf(String(f.id)) >= 0 })
       var adapted = await adaptInvited(invited)
-      var strangerCount = matchStrangers ? Math.max(0, 5 - invited.length) : 0
-      if (!matchStrangers && invited.length !== 5) throw new Error('人数不足')
+      var strangerCount = matchStrangers ? Math.max(0, target - invited.length) : 0
+      if (!matchStrangers && invited.length !== target) throw new Error('人数不足')
       renderSetup(strangerCount ? '正在匹配路人玩家…' : '正在分发身份牌…')
       var strangers = strangerCount ? await generateStrangers(strangerCount, invited) : []
       var user = state.userAccount
@@ -360,13 +382,19 @@
       players.forEach(function(p, i) { p.seatNumber = i + 1; p.role = ''; p.camp = ''; p.alive = true; p.deathDay = null; p.deathCause = null; p.revealed = false; p.canSpeak = true; p.memory = { seerChecks: [], notes: [], suspicions: {} } })
       assignRoles(players)
       state.players = players; state.startedAt = Date.now(); state.day = 0; state.round = 0; state.phase = 'ready'
-      state.publicLog = []; state.privateLog = []; log('system', '6 人基础局已创建，所有玩家已进入准备席。'); save(); renderReady()
+      state.publicLog = []; state.privateLog = []; log('system', cfg.label + '已创建，所有玩家已进入准备席。'); save(); renderReady()
     } catch (err) { state.phase = 'lobby'; save(); toast(err.message || '开局失败'); renderLobby() }
     busy = false
   }
 
   function assignRoles(players) {
-    var roles = shuffle(['werewolf', 'werewolf', 'seer', 'witch', 'villager', 'villager'])
+    var n = players.length
+    var wolves = n >= 9 ? 3 : 2
+    var roles = []
+    for (var i = 0; i < wolves; i++) roles.push('werewolf')
+    roles.push('seer'); roles.push('witch')
+    while (roles.length < n) roles.push('villager')
+    roles = shuffle(roles)
     players.forEach(function(p, i) { p.role = roles[i]; p.camp = roles[i] === 'werewolf' ? 'werewolf' : 'villager' })
   }
 
@@ -375,7 +403,8 @@
   }
 
   function renderReady() {
-    shell('对局准备', '<section class="ww-ready-hero"><p>6 人基础局</p><h2>玩家已到齐</h2><span>确认座位后即可进入对局</span></section>' +
+    var cfg = roomConfig(state.gameMode)
+    shell('对局准备', '<section class="ww-ready-hero"><p>' + esc(cfg.label) + '</p><h2>玩家已到齐</h2><span>确认座位后即可进入对局</span></section>' +
       '<section class="ww-panel"><h3>本局玩家</h3><div class="ww-ready-list">' + state.players.map(function(p) {
         return '<div>' + avatarHTML(p) + '<span class="ww-ready-copy"><b>' + esc(playerLabel(p)) + '</b><small>' + (p.isUser ? '你 · 房主' : p.source === 'invited' ? '受邀好友' : '匹配路人') + '</small></span><i class="fa-solid fa-check"></i></div>'
       }).join('') + '</div></section><button class="ww-primary ww-bottom-button" id="ww-ready-game" type="button">准备，进入对局</button>')
@@ -780,7 +809,7 @@
       var user = selectedUser || await db.characters.get(parseInt(state.userAccount.id, 10))
       selectedUser = user
       selectedFriends = await loadFriends(user)
-      state = freshLobby(user, selectedFriends)
+      state = freshLobby(user, selectedFriends, state.gameMode)
       save(); renderLobby()
     }
   }
